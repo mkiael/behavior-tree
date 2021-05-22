@@ -11,6 +11,7 @@ enum Status {
 enum NodeType {
     Sequence,
     Condition,
+    Action,
 }
 
 struct Node {
@@ -63,20 +64,61 @@ impl<'a> ConditionMap<'a> {
     }
 }
 
-fn tick(node: &Node, blackboard: &Blackboard, condition_map: &ConditionMap) -> Status {
+pub struct Action<'a> {
+    cb: Box<dyn FnMut(&mut Blackboard) -> Status + 'a>,
+}
+
+impl<'a> Action<'a> {
+    pub fn new(cb: impl FnMut(&mut Blackboard) -> Status + 'a) -> Self {
+        Action { cb: Box::new(cb) }
+    }
+
+    pub fn execute(&mut self, blackboard: &mut Blackboard) -> Status {
+        (self.cb)(blackboard)
+    }
+}
+
+pub struct ActionMap<'a> {
+    actions: HashMap<u64, Action<'a>>,
+}
+
+impl<'a> ActionMap<'a> {
+    pub fn new() -> Self {
+        Self {
+            actions: HashMap::new(),
+        }
+    }
+
+    pub fn add_action(&mut self, node_id: u64, action: Action<'a>) {
+        self.actions.insert(node_id, action);
+    }
+
+    pub fn get_action(&mut self, node_id: u64) -> &mut Action<'a> {
+        self.actions.get_mut(&node_id).unwrap()
+    }
+}
+
+fn tick(
+    node: &Node,
+    blackboard: &mut Blackboard,
+    condition_map: &ConditionMap,
+    action_map: &mut ActionMap,
+) -> Status {
     match node.node_type {
-        NodeType::Sequence => execute_sequence_node(node, blackboard, condition_map),
+        NodeType::Sequence => execute_sequence_node(node, blackboard, condition_map, action_map),
         NodeType::Condition => execute_condition_node(node, blackboard, condition_map),
+        NodeType::Action => execute_action_node(node, blackboard, action_map),
     }
 }
 
 fn execute_sequence_node(
     node: &Node,
-    blackboard: &Blackboard,
+    blackboard: &mut Blackboard,
     condition_map: &ConditionMap,
+    action_map: &mut ActionMap,
 ) -> Status {
     for child_node in node.children.iter() {
-        let status = tick(&child_node, blackboard, condition_map);
+        let status = tick(&child_node, blackboard, condition_map, action_map);
         if status == Status::Running {
             return Status::Running;
         } else if status == Status::Failure {
@@ -97,6 +139,15 @@ fn execute_condition_node(
     } else {
         return Status::Failure;
     }
+}
+
+fn execute_action_node(
+    node: &Node,
+    blackboard: &mut Blackboard,
+    action_map: &mut ActionMap,
+) -> Status {
+    let action = action_map.get_action(node.id);
+    action.execute(blackboard)
 }
 
 #[cfg(test)]
